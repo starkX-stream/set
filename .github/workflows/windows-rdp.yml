@@ -4,17 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       tailscale_key:
-        description: 'Tailscale Auth Key (tskey-auth-...)'
+        description: '1. Tailscale Auth Key (tskey-auth-...)'
         required: true
-        default: ''
-      ngrok_domain:
-        description: 'Ngrok Static Domain'
-        required: true
-        default: 'monetary-turbojet-twisty.ngrok-free.dev'
       ngrok_token:
-        description: 'Ngrok Authtoken'
+        description: '2. Ngrok Authtoken'
         required: true
-        default: '3JdjaWFjwP8U0VHUorGSfXQFX1x_7avDa3Jb8PTfuT8adXynb'
+      ngrok_domain:
+        description: '3. Ngrok Static Domain'
+        required: true
 
 jobs:
   build:
@@ -50,6 +47,7 @@ jobs:
           MY_DOMAIN: ${{ github.event.inputs.ngrok_domain }}
           MY_TOKEN: ${{ github.event.inputs.ngrok_token }}
         run: |
+          # فعال‌سازی ngrok
           ngrok config add-authtoken $Env:MY_TOKEN
           Start-Process "ngrok" -ArgumentList "http 5678 --domain=$Env:MY_DOMAIN"
           
@@ -59,6 +57,7 @@ jobs:
           [Environment]::SetEnvironmentVariable("N8N_SECURE_COOKIE", "false", "Machine")
           [Environment]::SetEnvironmentVariable("N8N_PORT", "5678", "Machine")
 
+          # ساخت فایل بت با دستور npx (بار اول کش می‌شود، دفعات بعدی فوری باز می‌شود)
           $publicDesktop = "C:\Users\Public\Desktop"
           $batContent = @"
           @echo off
@@ -66,14 +65,8 @@ jobs:
           echo ==============================================
           echo Webhook URL: $webhookUrl
           echo ==============================================
-          where n8n >nul 2>nul
-          if %errorlevel% neq 0 (
-              echo n8n is not installed yet. Installing now...
-              echo Please wait a moment...
-              call npm install -g n8n@1.82.2 --omit=dev --no-audit --no-fund --force
-          )
           echo Starting n8n...
-          n8n start
+          call npx --yes n8n
           pause
           "@
           Set-Content -Path "$publicDesktop\Start-n8n.bat" -Value $batContent
@@ -86,7 +79,7 @@ jobs:
 
       - name: 5. Connect Tailscale VPN
         env:
-          TS_KEY: ${{ github.event.inputs.tailscale_key || secrets.TAILSCALE_AUTHKEY }}
+          TS_KEY: ${{ github.event.inputs.tailscale_key }}
         run: |
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
