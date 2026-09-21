@@ -1,0 +1,112 @@
+name: Super Fast Windows Cloud RDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      ngrok_domain:
+        description: 'Ngrok Static Domain'
+        required: true
+        default: 'monetary-turbojet-twisty.ngrok-free.dev'
+      ngrok_token:
+        description: 'Ngrok Authtoken'
+        required: true
+        default: '3JdjaWFjwP8U0VHUorGSfXQFX1x_7avDa3Jb8PTfuT8adXynb'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: 1. Enable Remote Desktop & Firewall
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
+
+      - name: 2. Disable Password Policy & Create User
+        run: |
+          secedit /export /cfg C:\sec.cfg
+          (Get-Content C:\sec.cfg) -replace 'PasswordComplexity = 1', 'PasswordComplexity = 0' `
+                                  -replace 'MinimumPasswordLength = \d+', 'MinimumPasswordLength = 0' | Set-Content C:\sec.cfg
+          secedit /configure /db C:\sec.sdb /cfg C:\sec.cfg /areas SECURITYPOLICY
+          
+          $Password = ConvertTo-SecureString "x-pass" -AsPlainText -Force
+          New-LocalUser -Name "x-admin" -Password $Password -PasswordNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "x-admin" -ErrorAction SilentlyContinue
+          net user runneradmin x-pass
+
+      - name: 3. Speed Up System & Install Basic Tools
+        run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true
+          choco install notepadplusplus ngrok --yes --no-progress
+
+      - name: 4. Configure Static Ngrok & Setup Desktop Launcher
+        env:
+          MY_DOMAIN: ${{ github.event.inputs.ngrok_domain }}
+          MY_TOKEN: ${{ github.event.inputs.ngrok_token }}
+        run: |
+          # فعال‌سازی ngrok با توکن و دامنه وارد شده
+          ngrok config add-authtoken $Env:MY_TOKEN
+          Start-Process "ngrok" -ArgumentList "http 5678 --domain=$Env:MY_DOMAIN"
+          
+          $webhookUrl = "https://$Env:MY_DOMAIN/"
+
+          # ذخیره متغیرها در سطح سیستم
+          [Environment]::SetEnvironmentVariable("WEBHOOK_URL", $webhookUrl, "Machine")
+          [Environment]::SetEnvironmentVariable("N8N_SECURE_COOKIE", "false", "Machine")
+          [Environment]::SetEnvironmentVariable("N8N_PORT", "5678", "Machine")
+
+          # ساخت فایل بت هوشمند روی دسکتاپ عمومی
+          $publicDesktop = "C:\Users\Public\Desktop"
+          $batContent = @"
+          @echo off
+          title n8n Manager
+          echo ==============================================
+          echo Webhook URL: $webhookUrl
+          echo ==============================================
+          where n8n >nul 2>nul
+          if %errorlevel% neq 0 (
+              echo n8n is not installed yet. Installing now...
+              echo Please wait a moment...
+              call npm install -g n8n@1.82.2 --omit=dev --no-audit --no-fund --force
+          )
+          echo Starting n8n...
+          n8n start
+          pause
+          "@
+          Set-Content -Path "$publicDesktop\Start-n8n.bat" -Value $batContent
+
+          Write-Host ""
+          Write-Host "==================================================" -ForegroundColor Green
+          Write-Host "  >>> N8N WEBHOOK READY <<<" -ForegroundColor Cyan
+          Write-Host "  URL: $webhookUrl" -ForegroundColor Yellow
+          Write-Host "==================================================" -ForegroundColor Green
+
+      - name: 5. Connect Tailscale VPN
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
+          Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
+          
+          Start-Sleep -Seconds 5
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-rdp-server"
+          
+          Start-Sleep -Seconds 6
+          $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          
+          Write-Host ""
+          Write-Host "==================================================" -ForegroundColor Green
+          Write-Host "  >>> RDP IS READY TO CONNECT <<<" -ForegroundColor Cyan
+          Write-Host "  IP       : $ts_ip" -ForegroundColor Yellow
+          Write-Host "  Username : x-admin" -ForegroundColor Yellow
+          Write-Host "  Password : x-pass" -ForegroundColor Yellow
+          Write-Host "==================================================" -ForegroundColor Green
+
+      - name: 6. Keep Alive (6 Hours)
+        run: |
+          for ($i = 1; $i -le 360; $i++) {
+            Start-Sleep -Seconds 60
+            Write-Host "[$i/360] Server active..."
+          }
