@@ -3,6 +3,10 @@ name: Super Fast Windows Cloud RDP
 on:
   workflow_dispatch:
     inputs:
+      tailscale_key:
+        description: 'Tailscale Auth Key (tskey-auth-...)'
+        required: true
+        default: ''
       ngrok_domain:
         description: 'Ngrok Static Domain'
         required: true
@@ -46,18 +50,15 @@ jobs:
           MY_DOMAIN: ${{ github.event.inputs.ngrok_domain }}
           MY_TOKEN: ${{ github.event.inputs.ngrok_token }}
         run: |
-          # فعال‌سازی ngrok با توکن و دامنه وارد شده
           ngrok config add-authtoken $Env:MY_TOKEN
           Start-Process "ngrok" -ArgumentList "http 5678 --domain=$Env:MY_DOMAIN"
           
           $webhookUrl = "https://$Env:MY_DOMAIN/"
 
-          # ذخیره متغیرها در سطح سیستم
           [Environment]::SetEnvironmentVariable("WEBHOOK_URL", $webhookUrl, "Machine")
           [Environment]::SetEnvironmentVariable("N8N_SECURE_COOKIE", "false", "Machine")
           [Environment]::SetEnvironmentVariable("N8N_PORT", "5678", "Machine")
 
-          # ساخت فایل بت هوشمند روی دسکتاپ عمومی
           $publicDesktop = "C:\Users\Public\Desktop"
           $batContent = @"
           @echo off
@@ -85,13 +86,13 @@ jobs:
 
       - name: 5. Connect Tailscale VPN
         env:
-          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          TS_KEY: ${{ github.event.inputs.tailscale_key || secrets.TAILSCALE_AUTHKEY }}
         run: |
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
           
           Start-Sleep -Seconds 5
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-rdp-server"
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TS_KEY" --hostname="github-rdp-server"
           
           Start-Sleep -Seconds 6
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
